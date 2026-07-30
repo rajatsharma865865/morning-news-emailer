@@ -18,7 +18,7 @@ CONFIG = {
     "sender_email":    os.environ["SENDER_EMAIL"],
     "sender_password": os.environ["SENDER_PASSWORD"],
     "receiver_email":  os.environ["RECEIVER_EMAIL"],
-    "news_per_beat":   5,
+    "news_per_beat":   10,
 }
 
 BEATS = ["National","International","Politics","Sports",
