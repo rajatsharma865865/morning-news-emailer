@@ -49,6 +49,8 @@ SOURCES = [
      "selector": "h2 a, h3 a, .post-title a, .headline a"},
     {"name": "Live Hindustan",  "url": "https://www.livehindustan.com/",
      "selector": "h2 a, h3 a, .news-item a, .heading a"},
+    {"name": "Dainik Bhaskar",  "url": "https://www.bhaskar.com/",
+     "selector": "h2 a, h3 a, .headline a, .story-title a, article a, .card-title a"},
 ]
 
 BEAT_KEYWORDS = {
@@ -287,7 +289,7 @@ def build_html(news_by_beat: dict) -> str:
     <p style="margin:0 0 6px;font-size:11px;color:#334155;line-height:1.8;">
       📰 Hindustan Times &nbsp;·&nbsp; Indian Express &nbsp;·&nbsp; News18
       &nbsp;·&nbsp; Moneycontrol &nbsp;·&nbsp; Firstpost
-      &nbsp;·&nbsp; ABP Live &nbsp;·&nbsp; Live Hindustan
+      &nbsp;·&nbsp; ABP Live &nbsp;·&nbsp; Live Hindustan &nbsp;·&nbsp; Dainik Bhaskar
     </p>
     <p style="margin:0;font-size:11px;color:#1e293b;">
       Auto-generated · रोज 9:00 AM IST · {datetime.now().strftime("%I:%M %p")} IST
