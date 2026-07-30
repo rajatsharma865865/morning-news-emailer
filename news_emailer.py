@@ -54,29 +54,57 @@ SOURCES = [
 ]
 
 BEAT_KEYWORDS = {
-    "National":       ["india","national","delhi","central government","modi","parliament",
-                       "bharat","supreme court","high court","election commission",
-                       "rajya sabha","lok sabha","cbi","ed "],
-    "International":  ["world","global","international","usa","us ","china","russia",
-                       "uk ","pakistan","israel","europe","un ","nato","foreign",
-                       "biden","trump","war","ukraine","iran","saudi"],
-    "Politics":       ["party","bjp","congress","aap","sp ","bsp","election","vote",
-                       "minister","cm ","chief minister","opposition","rally","political",
-                       "governor","mla","mp ","yogi","rahul"],
-    "Sports":         ["cricket","ipl","football","hockey","tennis","badminton","olympic",
-                       "sports","match","tournament","player","team india","bcci","fifa",
-                       "trophy","league","virat","rohit","neeraj","cwc"],
-    "Entertainment":  ["bollywood","film","movie","actor","actress","cinema","music",
-                       "celebrity","award","ott","netflix","series","web series","singer",
-                       "dance","tv show","deepika","shahrukh","salman","ranveer"],
-    "Science & Tech": ["tech","technology","science","ai ","artificial intelligence",
-                       "space","isro","nasa","startup","app","software","gadget","phone",
-                       "internet","cyber","research","innovation","electric vehicle",
-                       "ev ","5g","satellite"],
-    "City News":      ["mumbai","delhi ncr","bangalore","bengaluru","hyderabad","chennai",
-                       "kolkata","pune","ahmedabad","noida","gurgaon","lucknow","jaipur",
-                       "local","city","traffic","metro","municipal","ward","mayor",
-                       "patna","bhopal"],
+    "National":       ["national disaster","central scheme","government scheme",
+                       "supreme court","high court","cbi ","ed case","income tax",
+                       "indian railway","flood","earthquake","niti aayog",
+                       "union budget","inflation","gdp","rbi ","rupee",
+                       "petrol price","aadhaar","census","unemployment"],
+    "International":  ["world","global","international","usa","us president","china",
+                       "russia","pakistan","israel","europe","united nations",
+                       "nato","foreign minister","biden","trump","war","ukraine",
+                       "iran","saudi","afghanistan","taiwan","japan",
+                       "australia","canada","imf","world bank","g20","g7",
+                       "opec","diplomacy","embassy"],
+    "Politics":       ["bjp","congress","aam aadmi","samajwadi","bsp ","trinamool",
+                       "shiv sena","election","bypolls","chief minister","cm wins",
+                       "governor","mla ","yogi adityanath","rahul gandhi",
+                       "amit shah","kejriwal","mamata","nitish kumar",
+                       "opposition","ruling party","political","coalition",
+                       "alliance","rally","manifesto","ballot",
+                       "cabinet reshuffle","minister resigns","party president",
+                       "lok sabha seat","rajya sabha seat"],
+    "Sports":         ["cricket","ipl","test match","odi ","t20 ","world cup cricket",
+                       "football","fifa","premier league","isl ",
+                       "hockey","badminton","tennis","grand slam","wimbledon",
+                       "olympic","commonwealth games","asian games",
+                       "bcci","virat kohli","rohit sharma","ms dhoni","bumrah",
+                       "neeraj chopra","pv sindhu","saina nehwal",
+                       "match result","semi final","final match",
+                       "gold medal","silver medal","bronze medal","wicket",
+                       "century","hat trick","player transfer","team india cricket"],
+    "Entertainment":  ["bollywood","film release","movie review","box office",
+                       "actor","actress","director film","cinema","music album",
+                       "celebrity","filmfare","iifa","ott release","netflix series",
+                       "amazon prime","hotstar","web series","singer","concert",
+                       "deepika padukone","alia bhatt","ranbir kapoor","salman khan",
+                       "shahrukh khan","akshay kumar","katrina kaif",
+                       "hrithik roshan","arijit singh","neha kakkar",
+                       "bigg boss","indian idol","award ceremony","trailer launch"],
+    "Science & Tech": ["technology","artificial intelligence","ai model","chatgpt",
+                       "space mission","isro launch","nasa","chandrayaan","gaganyaan",
+                       "rocket launch","satellite launch","startup funding","unicorn startup",
+                       "app launch","software update","iphone launch","apple event",
+                       "samsung galaxy","google ai","meta ai","microsoft ai",
+                       "electric vehicle launch","tesla","ola electric",
+                       "5g network","cyber attack","data breach","robot",
+                       "quantum computing","semiconductor","climate change tech",
+                       "solar energy","renewable energy"],
+    "City News":      ["mumbai","delhi traffic","bangalore","bengaluru","hyderabad",
+                       "chennai","kolkata","pune","ahmedabad","noida","gurgaon",
+                       "lucknow","jaipur","patna","bhopal","surat","indore",
+                       "metro rail","local train","city police","municipal corporation",
+                       "ward","mayor","traffic jam","pothole",
+                       "water supply","power cut","smart city","housing society"],
 }
 
 HEADERS = {
@@ -103,12 +131,22 @@ class NewsItem:
             " ".join(self.title.lower().split()).encode()).hexdigest()
 
 
+# Beats with higher priority win ties over National
+BEAT_PRIORITY = {
+    "Sports": 3, "Entertainment": 3, "Science & Tech": 3,
+    "Politics": 3, "International": 3, "City News": 2, "National": 1,
+}
+
 def assign_beat(title: str) -> str:
     t = title.lower()
     scores = {b: sum(1 for kw in kws if kw in t)
               for b, kws in BEAT_KEYWORDS.items()}
-    best = max(scores, key=scores.get)
-    return best if scores[best] > 0 else "National"
+    max_score = max(scores.values())
+    if max_score == 0:
+        return "National"
+    # Among tied beats, pick the one with highest priority
+    top_beats = [b for b, s in scores.items() if s == max_score]
+    return max(top_beats, key=lambda b: BEAT_PRIORITY.get(b, 1))
 
 
 def news_value_score(title: str) -> float:
