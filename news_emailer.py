@@ -1,19 +1,17 @@
 """
-Daily Morning News Emailer — NewsAPI based
+Daily Morning News Emailer — NewsAPI Top Headlines
 Guaranteed 10 news per beat | GitHub Actions | 9 AM IST
 Bilingual Hindi + English
-Free API: newsapi.org (100 req/day free plan)
 """
 
 import os, smtplib, hashlib, logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from dataclasses import dataclass, field
 
 import requests
 
-# ── Credentials (GitHub Secrets) ─────────────────────────────
 CONFIG = {
     "sender_email":    os.environ["SENDER_EMAIL"],
     "sender_password": os.environ["SENDER_PASSWORD"],
@@ -35,42 +33,41 @@ BEAT_BILINGUAL = {
     "City News":      {"hi": "शहर",             "en": "City News"},
 }
 
-# ── NewsAPI query per beat ────────────────────────────────────
-BEAT_QUERIES = {
-    "National": {
-        "q": "India",
-        "sources": "the-hindu,the-times-of-india,ndtv",
-        "language": "en",
-    },
-    "International": {
-        "q": "world international",
-        "sources": "bbc-news,reuters,al-jazeera-english,associated-press",
-        "language": "en",
-    },
-    "Politics": {
-        "q": "BJP Congress election Modi Rahul Gandhi India politics",
-        "language": "en",
-        "sources": "the-hindu,the-times-of-india,ndtv",
-    },
-    "Sports": {
-        "q": "cricket IPL India sports football hockey",
-        "sources": "espn",
-        "language": "en",
-    },
-    "Entertainment": {
-        "q": "Bollywood movies OTT Netflix film India entertainment",
-        "language": "en",
-    },
-    "Science & Tech": {
-        "q": "technology AI ISRO space startup India",
-        "sources": "techcrunch,wired,ars-technica",
-        "language": "en",
-    },
-    "City News": {
-        "q": "Delhi Mumbai Bangalore Chennai Hyderabad Kolkata city",
-        "language": "en",
-    },
+# NewsAPI /top-headlines params per beat
+# Free plan supports: country, category, q, sources
+BEAT_PARAMS = {
+    "National": [
+        {"country": "in", "pageSize": 30},
+        {"country": "in", "q": "india", "pageSize": 30},
+    ],
+    "International": [
+        {"country": "us", "pageSize": 20},
+        {"country": "gb", "pageSize": 20},
+        {"q": "world international", "language": "en", "pageSize": 20},
+    ],
+    "Politics": [
+        {"country": "in", "q": "BJP Congress election Modi politics", "pageSize": 30},
+        {"country": "in", "q": "parliament minister CM government", "pageSize": 30},
+    ],
+    "Sports": [
+        {"country": "in", "category": "sports", "pageSize": 30},
+        {"q": "cricket IPL India sports", "language": "en", "pageSize": 30},
+    ],
+    "Entertainment": [
+        {"country": "in", "category": "entertainment", "pageSize": 30},
+        {"q": "bollywood movie film OTT", "language": "en", "pageSize": 30},
+    ],
+    "Science & Tech": [
+        {"country": "in", "category": "technology", "pageSize": 30},
+        {"q": "ISRO technology AI startup India", "language": "en", "pageSize": 30},
+    ],
+    "City News": [
+        {"country": "in", "q": "Delhi Mumbai Bangalore Chennai city", "pageSize": 30},
+        {"country": "in", "q": "Noida Gurgaon Lucknow Pune Hyderabad", "pageSize": 30},
+    ],
 }
+
+NEWSAPI_URL = "https://newsapi.org/v2/top-headlines"
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s | %(levelname)s | %(message)s",
@@ -84,7 +81,6 @@ class NewsItem:
     url: str
     source: str
     beat: str
-    score: float = 0.0
     fingerprint: str = field(init=False)
 
     def __post_init__(self):
@@ -93,80 +89,29 @@ class NewsItem:
         ).hexdigest()
 
 
-def fetch_beat(beat: str, query_cfg: dict) -> list:
-    """Fetch news for one beat from NewsAPI /everything endpoint."""
+def fetch_headlines(params: dict, beat: str) -> list:
     items = []
     try:
-        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
-        params = {
-            "apiKey":   CONFIG["newsapi_key"],
-            "pageSize": 30,
-            "sortBy":   "publishedAt",
-            "from":     yesterday,
-            "language": query_cfg.get("language", "en"),
-        }
-        if "q" in query_cfg:
-            params["q"] = query_cfg["q"]
-        if "sources" in query_cfg:
-            params["sources"] = query_cfg["sources"]
-
-        r = requests.get(
-            "https://newsapi.org/v2/everything",
-            params=params,
-            timeout=15,
-        )
+        params["apiKey"] = CONFIG["newsapi_key"]
+        r = requests.get(NEWSAPI_URL, params=params, timeout=15)
         data = r.json()
-
         if data.get("status") != "ok":
-            log.warning(f"NewsAPI error for {beat}: {data.get('message','')}")
-            # Fallback: use /top-headlines
-            params2 = {
-                "apiKey":   CONFIG["newsapi_key"],
-                "pageSize": 30,
-                "country":  "in",
-            }
-            if beat == "Sports":
-                params2["category"] = "sports"
-            elif beat == "Entertainment":
-                params2["category"] = "entertainment"
-            elif beat == "Science & Tech":
-                params2["category"] = "technology"
-            elif beat in ("National", "Politics", "City News"):
-                params2["category"] = "general"
-            elif beat == "International":
-                params2.pop("country", None)
-                params2["q"] = "world"
-            r2 = requests.get(
-                "https://newsapi.org/v2/top-headlines",
-                params=params2,
-                timeout=15,
-            )
-            data = r2.json()
-
-        articles = data.get("articles", [])
-        seen_fp = set()
-        for art in articles:
-            title  = (art.get("title") or "").strip()
-            url    = (art.get("url") or "").strip()
-            src    = (art.get("source", {}).get("name") or "NewsAPI").strip()
+            log.warning(f"{beat}: API error — {data.get('message','')}")
+            return items
+        for art in data.get("articles", []):
+            title = (art.get("title") or "").strip()
+            url   = (art.get("url") or "").strip()
+            src   = (art.get("source", {}).get("name") or "NewsAPI").strip()
             if not title or title == "[Removed]" or not url:
                 continue
-            # Remove source suffix from title
+            # Clean title suffix
             for sep in [" - ", " | "]:
                 if sep in title:
                     title = title.rsplit(sep, 1)[0].strip()
-            fp = hashlib.md5(" ".join(title.lower().split()).encode()).hexdigest()
-            if fp in seen_fp:
-                continue
-            seen_fp.add(fp)
-            items.append(NewsItem(title=title, url=url,
-                                  source=src, beat=beat))
-
-        log.info(f"✅ {beat:15s} → {len(items)} articles from NewsAPI")
-
+            items.append(NewsItem(title=title, url=url, source=src, beat=beat))
+        log.info(f"✅ {beat:15s} | params={list(params.keys())} → {len(items)} articles")
     except Exception as e:
         log.error(f"❌ {beat}: {e}")
-
     return items
 
 
@@ -175,57 +120,28 @@ def collect_news() -> dict:
     global_seen = set()
 
     for beat in BEATS:
-        items = fetch_beat(beat, BEAT_QUERIES[beat])
+        beat_seen = set()
+        beat_items = []
 
-        # Global dedup
-        unique = []
-        for item in items:
-            if item.fingerprint not in global_seen:
-                global_seen.add(item.fingerprint)
-                unique.append(item)
+        for params in BEAT_PARAMS[beat]:
+            fetched = fetch_headlines(dict(params), beat)
+            for item in fetched:
+                if item.fingerprint not in beat_seen and item.fingerprint not in global_seen:
+                    beat_seen.add(item.fingerprint)
+                    beat_items.append(item)
+            if len(beat_items) >= CONFIG["news_per_beat"]:
+                break
 
-        # If still less than 10, fetch top-headlines as extra fallback
-        if len(unique) < CONFIG["news_per_beat"]:
-            log.warning(f"⚠️  {beat}: only {len(unique)} — fetching top-headlines fallback")
-            try:
-                cat_map = {
-                    "Sports": "sports", "Entertainment": "entertainment",
-                    "Science & Tech": "technology",
-                }
-                params = {
-                    "apiKey": CONFIG["newsapi_key"],
-                    "pageSize": 30,
-                    "country": "in",
-                    "category": cat_map.get(beat, "general"),
-                }
-                r = requests.get("https://newsapi.org/v2/top-headlines",
-                                 params=params, timeout=15)
-                for art in r.json().get("articles", []):
-                    title = (art.get("title") or "").strip()
-                    url   = (art.get("url") or "").strip()
-                    src   = (art.get("source", {}).get("name") or "").strip()
-                    if not title or title == "[Removed]" or not url:
-                        continue
-                    for sep in [" - ", " | "]:
-                        if sep in title:
-                            title = title.rsplit(sep, 1)[0].strip()
-                    fp = hashlib.md5(" ".join(title.lower().split()).encode()).hexdigest()
-                    if fp not in global_seen:
-                        global_seen.add(fp)
-                        unique.append(NewsItem(title=title, url=url,
-                                               source=src, beat=beat))
-                    if len(unique) >= CONFIG["news_per_beat"]:
-                        break
-            except Exception as e:
-                log.warning(f"Fallback error for {beat}: {e}")
+        for item in beat_items[:CONFIG["news_per_beat"]]:
+            global_seen.add(item.fingerprint)
 
-        categorized[beat] = unique[:CONFIG["news_per_beat"]]
+        categorized[beat] = beat_items[:CONFIG["news_per_beat"]]
         log.info(f"📰 {beat:15s} → Final: {len(categorized[beat])} news")
 
     return categorized
 
 
-# ── Email HTML Template ───────────────────────────────────────
+# Email Template
 BEAT_META = {
     "National":       {"color": "#1a56db", "icon": "🇮🇳"},
     "International":  {"color": "#0e9f6e", "icon": "🌍"},
@@ -267,7 +183,6 @@ def build_html(news_by_beat: dict) -> str:
         items = news_by_beat.get(beat, [])
         meta, bi = BEAT_META[beat], BEAT_BILINGUAL[beat]
         rows = ""
-
         if not items:
             rows = """<tr><td style="padding:16px 18px;color:#94a3b8;font-size:13px;">
                         Aaj is category mein news nahi mili.
@@ -276,8 +191,7 @@ def build_html(news_by_beat: dict) -> str:
             for i, item in enumerate(items, 1):
                 rows += f"""
                 <tr>
-                  <td style="padding:12px 18px;border-bottom:1px solid #f1f5f9;
-                             vertical-align:top;">
+                  <td style="padding:12px 18px;border-bottom:1px solid #f1f5f9;vertical-align:top;">
                     <table width="100%" cellpadding="0" cellspacing="0"><tr>
                       <td style="width:28px;vertical-align:top;padding-top:2px;">
                         <b style="color:{meta['color']};font-size:13px;">#{i}</b>
@@ -298,8 +212,7 @@ def build_html(news_by_beat: dict) -> str:
                 </tr>"""
 
         beats_html += f"""
-        <div style="margin-bottom:22px;border-radius:12px;overflow:hidden;
-                    border:1px solid #e2e8f0;">
+        <div style="margin-bottom:22px;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;">
           <div style="background:{meta['color']};padding:12px 20px;">
             <table width="100%" cellpadding="0" cellspacing="0"><tr>
               <td>
@@ -328,46 +241,32 @@ def build_html(news_by_beat: dict) -> str:
 <title>Aaj Ki Khabrein</title></head>
 <body style="margin:0;padding:0;background:#eef2f7;
              font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0"
-       style="padding:28px 0;background:#eef2f7;">
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:28px 0;background:#eef2f7;">
 <tr><td align="center">
 <table width="640" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;">
-
-  <tr><td style="background:#0f172a;border-radius:14px 14px 0 0;
-                 padding:30px 36px;text-align:center;">
-    <p style="margin:0 0 8px;font-size:11px;color:#475569;
-              letter-spacing:3px;text-transform:uppercase;">Daily Morning Digest</p>
-    <h1 style="margin:0 0 4px;font-size:28px;font-weight:800;color:#f8fafc;">
-      ☀️ आज की खबरें</h1>
+  <tr><td style="background:#0f172a;border-radius:14px 14px 0 0;padding:30px 36px;text-align:center;">
+    <p style="margin:0 0 8px;font-size:11px;color:#475569;letter-spacing:3px;text-transform:uppercase;">Daily Morning Digest</p>
+    <h1 style="margin:0 0 4px;font-size:28px;font-weight:800;color:#f8fafc;">Aaj Ki Khabrein</h1>
     <p style="margin:0 0 2px;font-size:13px;color:#e2e8f0;font-weight:500;">{today_hi}</p>
     <p style="margin:0 0 16px;font-size:12px;color:#64748b;">{today_en}</p>
-    <span style="background:rgba(148,163,184,0.12);color:#94a3b8;
-                 font-size:12px;padding:5px 16px;border-radius:20px;">
-      {total} khabrein &nbsp;·&nbsp; 7 categories
+    <span style="background:rgba(148,163,184,0.12);color:#94a3b8;font-size:12px;padding:5px 16px;border-radius:20px;">
+      {total} khabrein &nbsp;.&nbsp; 7 categories
     </span>
   </td></tr>
-
   <tr><td style="background:#1e3a5f;padding:10px 36px;text-align:center;">
     <p style="margin:0;font-size:12px;color:#93c5fd;line-height:1.6;">
-      🔔 <b style="color:#bfdbfe;">Aapki personalized morning briefing</b>
-      &nbsp;|&nbsp; Har beat mein 10 guaranteed khabrein
-      &nbsp;|&nbsp; Powered by NewsAPI
+      Aapki personalized morning briefing &nbsp;|&nbsp; Har beat mein 10 khabrein &nbsp;|&nbsp; Powered by NewsAPI
     </p>
   </td></tr>
-
   <tr><td style="background:#eef2f7;padding:20px 6px;">{beats_html}</td></tr>
-
-  <tr><td style="background:#0f172a;border-radius:0 0 14px 14px;
-                 padding:20px 36px;text-align:center;">
+  <tr><td style="background:#0f172a;border-radius:0 0 14px 14px;padding:20px 36px;text-align:center;">
     <p style="margin:0 0 6px;font-size:11px;color:#334155;line-height:1.8;">
-      📰 Sources: BBC · Reuters · NDTV · Times of India · The Hindu
-      · ESPN · TechCrunch · Al Jazeera & more
+      Sources: BBC, Reuters, NDTV, Times of India, ESPN, TechCrunch & more
     </p>
     <p style="margin:0;font-size:11px;color:#1e293b;">
-      Auto-generated · रोज 9:00 AM IST · {datetime.now().strftime("%I:%M %p")} IST
+      Auto-generated &nbsp;.&nbsp; Roz 9:00 AM IST &nbsp;.&nbsp; {datetime.now().strftime("%I:%M %p")} IST
     </p>
   </td></tr>
-
 </table></td></tr></table>
 </body></html>"""
 
@@ -375,16 +274,15 @@ def build_html(news_by_beat: dict) -> str:
 def send_email(html: str) -> bool:
     today_en = datetime.now().strftime("%d %b %Y")
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"☀️ आज की खबरें — {today_en} | Morning News Digest"
+    msg["Subject"] = f"Aaj Ki Khabrein - {today_en} | Morning News Digest"
     msg["From"]    = CONFIG["sender_email"]
     msg["To"]      = CONFIG["receiver_email"]
     msg.attach(MIMEText(html, "html", "utf-8"))
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
             s.login(CONFIG["sender_email"], CONFIG["sender_password"])
-            s.sendmail(CONFIG["sender_email"],
-                       CONFIG["receiver_email"], msg.as_string())
-        log.info(f"✅ Email sent → {CONFIG['receiver_email']}")
+            s.sendmail(CONFIG["sender_email"], CONFIG["receiver_email"], msg.as_string())
+        log.info(f"✅ Email sent to {CONFIG['receiver_email']}")
         return True
     except smtplib.SMTPAuthenticationError:
         log.error("❌ Gmail auth failed")
@@ -395,11 +293,11 @@ def send_email(html: str) -> bool:
 
 def main():
     log.info("=" * 60)
-    log.info("🚀  Daily News Emailer — NewsAPI Edition")
+    log.info("Daily News Emailer - NewsAPI Top Headlines")
     log.info("=" * 60)
     news = collect_news()
     send_email(build_html(news))
-    log.info("Done ✓")
+    log.info("Done")
 
 
 if __name__ == "__main__":
