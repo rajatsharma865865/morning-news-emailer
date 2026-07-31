@@ -1,24 +1,25 @@
 """
-Daily Morning News Emailer — Guaranteed 10 per beat
-Each beat has its OWN dedicated RSS feeds — no cross-contamination
-GitHub Actions | 9:00 AM IST | Bilingual Hindi + English
+Daily Morning News Emailer — NewsAPI based
+Guaranteed 10 news per beat | GitHub Actions | 9 AM IST
+Bilingual Hindi + English
+Free API: newsapi.org (100 req/day free plan)
 """
 
-import os, smtplib, hashlib, time, logging
-from datetime import datetime
+import os, smtplib, hashlib, logging
+from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from dataclasses import dataclass, field
 
 import requests
-from bs4 import BeautifulSoup
 
-# ── Credentials ───────────────────────────────────────────────
+# ── Credentials (GitHub Secrets) ─────────────────────────────
 CONFIG = {
     "sender_email":    os.environ["SENDER_EMAIL"],
     "sender_password": os.environ["SENDER_PASSWORD"],
     "receiver_email":  os.environ["RECEIVER_EMAIL"],
-    "news_per_beat":   10,   # Minimum guaranteed per beat
+    "newsapi_key":     os.environ["NEWSAPI_KEY"],
+    "news_per_beat":   10,
 }
 
 BEATS = ["National", "International", "Politics", "Sports",
@@ -34,92 +35,42 @@ BEAT_BILINGUAL = {
     "City News":      {"hi": "शहर",             "en": "City News"},
 }
 
-# ── DEDICATED RSS feeds per beat — strict isolation ──────────
-# Each beat ONLY pulls from its own feeds — no keyword filtering needed
-BEAT_RSS = {
-    "National": [
-        "https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml",
-        "https://indianexpress.com/section/india/feed/",
-        "https://www.news18.com/rss/india.xml",
-        "https://www.firstpost.com/rss/india.xml",
-        "https://www.bhaskar.com/rss-feed/1061/",
-        "https://www.abplive.com/rss/india.xml",
-        "https://www.livehindustan.com/rss/national.xml",
-        "https://news.google.com/rss/search?q=india+national+news+today&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNREZqY0hsNUVnSmxiaWdBUAE?hl=en-IN&gl=IN&ceid=IN:en",
-    ],
-    "International": [
-        "https://www.hindustantimes.com/feeds/rss/world-news/rssfeed.xml",
-        "https://indianexpress.com/section/world/feed/",
-        "https://www.news18.com/rss/world.xml",
-        "https://www.firstpost.com/rss/world.xml",
-        "https://news.google.com/rss/search?q=world+international+news+today&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/search?q=USA+China+Russia+UK+war+global+news&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtVnVHZ0pKVGlnQVAB?hl=en-IN&gl=IN&ceid=IN:en",
-    ],
-    "Politics": [
-        "https://indianexpress.com/section/political-pulse/feed/",
-        "https://www.news18.com/rss/politics.xml",
-        "https://www.firstpost.com/rss/politics.xml",
-        "https://news.google.com/rss/search?q=BJP+Congress+AAP+election+India+politics&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/search?q=Modi+Rahul+Gandhi+Amit+Shah+Kejriwal+politics&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/search?q=India+election+MLA+MP+minister+political+party&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/search?q=Yogi+Mamata+Nitish+Kumar+CM+governor+India&hl=en-IN&gl=IN&ceid=IN:en",
-    ],
-    "Sports": [
-        "https://www.hindustantimes.com/feeds/rss/sports/rssfeed.xml",
-        "https://indianexpress.com/section/sports/feed/",
-        "https://www.news18.com/rss/sports.xml",
-        "https://www.firstpost.com/rss/sports.xml",
-        "https://news.google.com/rss/search?q=cricket+IPL+India+match+score+today&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/search?q=India+football+hockey+badminton+tennis+sports&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/search?q=Virat+Kohli+Rohit+Sharma+Neeraj+Chopra+PV+Sindhu&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/search?q=BCCI+FIFA+Olympics+tournament+medal+India+sports&hl=en-IN&gl=IN&ceid=IN:en",
-    ],
-    "Entertainment": [
-        "https://www.hindustantimes.com/feeds/rss/entertainment/rssfeed.xml",
-        "https://indianexpress.com/section/entertainment/feed/",
-        "https://www.news18.com/rss/entertainment.xml",
-        "https://www.firstpost.com/rss/entertainment.xml",
-        "https://news.google.com/rss/search?q=Bollywood+movie+film+release+box+office&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/search?q=Salman+Khan+Shahrukh+Deepika+Alia+Bhatt+actor&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/search?q=OTT+Netflix+Hotstar+Amazon+Prime+web+series+India&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/search?q=Bigg+Boss+Indian+Idol+reality+show+award+Filmfare&hl=en-IN&gl=IN&ceid=IN:en",
-    ],
-    "Science & Tech": [
-        "https://www.hindustantimes.com/feeds/rss/technology/rssfeed.xml",
-        "https://indianexpress.com/section/technology/feed/",
-        "https://www.news18.com/rss/tech.xml",
-        "https://www.firstpost.com/rss/tech.xml",
-        "https://news.google.com/rss/search?q=ISRO+space+mission+India+satellite+launch&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/search?q=Artificial+Intelligence+AI+ChatGPT+tech+India&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/search?q=iPhone+Samsung+Android+smartphone+launch+India&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/search?q=startup+funding+unicorn+India+electric+vehicle+EV&hl=en-IN&gl=IN&ceid=IN:en",
-    ],
-    "City News": [
-        "https://www.hindustantimes.com/feeds/rss/cities/rssfeed.xml",
-        "https://indianexpress.com/section/cities/feed/",
-        "https://www.livehindustan.com/rss/city.xml",
-        "https://news.google.com/rss/search?q=Delhi+Mumbai+Bangalore+city+news+today&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/search?q=Noida+Gurgaon+Lucknow+Jaipur+Pune+city+news&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/search?q=Delhi+traffic+metro+municipal+corporation+news&hl=en-IN&gl=IN&ceid=IN:en",
-        "https://news.google.com/rss/search?q=Mumbai+Chennai+Kolkata+Hyderabad+Ahmedabad+news&hl=en-IN&gl=IN&ceid=IN:en",
-    ],
+# ── NewsAPI query per beat ────────────────────────────────────
+BEAT_QUERIES = {
+    "National": {
+        "q": "India",
+        "sources": "the-hindu,the-times-of-india,ndtv",
+        "language": "en",
+    },
+    "International": {
+        "q": "world international",
+        "sources": "bbc-news,reuters,al-jazeera-english,associated-press",
+        "language": "en",
+    },
+    "Politics": {
+        "q": "BJP Congress election Modi Rahul Gandhi India politics",
+        "language": "en",
+        "sources": "the-hindu,the-times-of-india,ndtv",
+    },
+    "Sports": {
+        "q": "cricket IPL India sports football hockey",
+        "sources": "espn",
+        "language": "en",
+    },
+    "Entertainment": {
+        "q": "Bollywood movies OTT Netflix film India entertainment",
+        "language": "en",
+    },
+    "Science & Tech": {
+        "q": "technology AI ISRO space startup India",
+        "sources": "techcrunch,wired,ars-technica",
+        "language": "en",
+    },
+    "City News": {
+        "q": "Delhi Mumbai Bangalore Chennai Hyderabad Kolkata city",
+        "language": "en",
+    },
 }
-
-HEADERS = {
-    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                   "AppleWebKit/537.36 (KHTML, like Gecko) "
-                   "Chrome/124.0.0.0 Safari/537.36"),
-    "Accept": "application/rss+xml, application/xml, text/xml, */*",
-}
-
-TITLE_SUFFIXES = [
-    " - Hindustan Times", " - Indian Express", " | News18",
-    " - Firstpost", " - ABP Live", " - Dainik Bhaskar",
-    " - Live Hindustan", " | Moneycontrol", " - NDTV",
-    " - Times of India", " - The Hindu",
-]
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s | %(levelname)s | %(message)s",
@@ -142,106 +93,134 @@ class NewsItem:
         ).hexdigest()
 
 
-def news_value_score(title: str) -> float:
-    t, score = title.lower(), 5.0
-    high = ["breaking", "exclusive", "major", "crisis", "attack", "death",
-            "arrest", "resign", "record", "historic", "banned", "verdict",
-            "blast", "flood", "earthquake", "killed", "scam", "fraud",
-            "win", "champion", "final", "launch", "first", "new"]
-    low  = ["sponsored", "advertisement", "buy", "offer", "sale",
-            "how to", "tips", "quiz", "horoscope", "astrology"]
-    for w in high:
-        if w in t: score += 1.5
-    for w in low:
-        if w in t: score -= 3.0
-    return max(0.0, score)
-
-
-def clean_title(title: str) -> str:
-    for suffix in TITLE_SUFFIXES:
-        title = title.replace(suffix, "")
-    return title.strip()
-
-
-def fetch_rss(url: str, beat: str) -> list:
+def fetch_beat(beat: str, query_cfg: dict) -> list:
+    """Fetch news for one beat from NewsAPI /everything endpoint."""
     items = []
     try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        r.raise_for_status()
-        soup = None
-        for parser in ["xml", "lxml-xml", "lxml", "html.parser"]:
-            try:
-                soup = BeautifulSoup(r.content, parser)
-                if soup.find_all("item"):
-                    break
-            except Exception:
-                continue
-        if not soup:
-            return items
+        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+        params = {
+            "apiKey":   CONFIG["newsapi_key"],
+            "pageSize": 30,
+            "sortBy":   "publishedAt",
+            "from":     yesterday,
+            "language": query_cfg.get("language", "en"),
+        }
+        if "q" in query_cfg:
+            params["q"] = query_cfg["q"]
+        if "sources" in query_cfg:
+            params["sources"] = query_cfg["sources"]
 
-        rss_items = soup.find_all("item")
-        source_name = (url.split("/")[2]
-                       .replace("www.", "")
-                       .replace("news.google.com", "Google News")
-                       .split(".")[0].title())
+        r = requests.get(
+            "https://newsapi.org/v2/everything",
+            params=params,
+            timeout=15,
+        )
+        data = r.json()
 
-        for item in rss_items[:25]:
-            try:
-                title_tag = item.find("title")
-                link_tag  = item.find("link") or item.find("guid")
-                if not title_tag:
-                    continue
-                title = clean_title(title_tag.get_text(strip=True))
-                link  = (link_tag.get_text(strip=True)
-                         if link_tag else url)
-                if not title or len(title) < 15:
-                    continue
-                items.append(NewsItem(
-                    title=title, url=link,
-                    source=source_name, beat=beat,
-                    score=news_value_score(title)
-                ))
-            except Exception:
+        if data.get("status") != "ok":
+            log.warning(f"NewsAPI error for {beat}: {data.get('message','')}")
+            # Fallback: use /top-headlines
+            params2 = {
+                "apiKey":   CONFIG["newsapi_key"],
+                "pageSize": 30,
+                "country":  "in",
+            }
+            if beat == "Sports":
+                params2["category"] = "sports"
+            elif beat == "Entertainment":
+                params2["category"] = "entertainment"
+            elif beat == "Science & Tech":
+                params2["category"] = "technology"
+            elif beat in ("National", "Politics", "City News"):
+                params2["category"] = "general"
+            elif beat == "International":
+                params2.pop("country", None)
+                params2["q"] = "world"
+            r2 = requests.get(
+                "https://newsapi.org/v2/top-headlines",
+                params=params2,
+                timeout=15,
+            )
+            data = r2.json()
+
+        articles = data.get("articles", [])
+        seen_fp = set()
+        for art in articles:
+            title  = (art.get("title") or "").strip()
+            url    = (art.get("url") or "").strip()
+            src    = (art.get("source", {}).get("name") or "NewsAPI").strip()
+            if not title or title == "[Removed]" or not url:
                 continue
-        log.info(f"  ✓ {source_name:20s} → {len(items)} items")
+            # Remove source suffix from title
+            for sep in [" - ", " | "]:
+                if sep in title:
+                    title = title.rsplit(sep, 1)[0].strip()
+            fp = hashlib.md5(" ".join(title.lower().split()).encode()).hexdigest()
+            if fp in seen_fp:
+                continue
+            seen_fp.add(fp)
+            items.append(NewsItem(title=title, url=url,
+                                  source=src, beat=beat))
+
+        log.info(f"✅ {beat:15s} → {len(items)} articles from NewsAPI")
+
     except Exception as e:
-        log.warning(f"  ✗ {url[:55]:55s} → {e}")
+        log.error(f"❌ {beat}: {e}")
+
     return items
 
 
 def collect_news() -> dict:
     categorized = {}
-    # Global dedup across all beats
     global_seen = set()
 
     for beat in BEATS:
-        log.info(f"━━ Fetching: {beat} ━━")
-        beat_seen = set()
-        beat_items = []
+        items = fetch_beat(beat, BEAT_QUERIES[beat])
 
-        for feed_url in BEAT_RSS[beat]:
-            fetched = fetch_rss(feed_url, beat)
-            for item in fetched:
-                # Deduplicate within beat + globally
-                if (item.fingerprint not in beat_seen
-                        and item.fingerprint not in global_seen):
-                    beat_seen.add(item.fingerprint)
-                    beat_items.append(item)
-            # Stop fetching more feeds if we have enough
-            if len(beat_items) >= CONFIG["news_per_beat"] * 3:
-                break
-            time.sleep(0.4)
+        # Global dedup
+        unique = []
+        for item in items:
+            if item.fingerprint not in global_seen:
+                global_seen.add(item.fingerprint)
+                unique.append(item)
 
-        # Sort by score and take top N
-        beat_items.sort(key=lambda x: x.score, reverse=True)
-        final = beat_items[:CONFIG["news_per_beat"]]
+        # If still less than 10, fetch top-headlines as extra fallback
+        if len(unique) < CONFIG["news_per_beat"]:
+            log.warning(f"⚠️  {beat}: only {len(unique)} — fetching top-headlines fallback")
+            try:
+                cat_map = {
+                    "Sports": "sports", "Entertainment": "entertainment",
+                    "Science & Tech": "technology",
+                }
+                params = {
+                    "apiKey": CONFIG["newsapi_key"],
+                    "pageSize": 30,
+                    "country": "in",
+                    "category": cat_map.get(beat, "general"),
+                }
+                r = requests.get("https://newsapi.org/v2/top-headlines",
+                                 params=params, timeout=15)
+                for art in r.json().get("articles", []):
+                    title = (art.get("title") or "").strip()
+                    url   = (art.get("url") or "").strip()
+                    src   = (art.get("source", {}).get("name") or "").strip()
+                    if not title or title == "[Removed]" or not url:
+                        continue
+                    for sep in [" - ", " | "]:
+                        if sep in title:
+                            title = title.rsplit(sep, 1)[0].strip()
+                    fp = hashlib.md5(" ".join(title.lower().split()).encode()).hexdigest()
+                    if fp not in global_seen:
+                        global_seen.add(fp)
+                        unique.append(NewsItem(title=title, url=url,
+                                               source=src, beat=beat))
+                    if len(unique) >= CONFIG["news_per_beat"]:
+                        break
+            except Exception as e:
+                log.warning(f"Fallback error for {beat}: {e}")
 
-        # Mark as globally seen
-        for item in final:
-            global_seen.add(item.fingerprint)
-
-        categorized[beat] = final
-        log.info(f"✅ {beat:15s} → {len(final)} / {CONFIG['news_per_beat']} guaranteed")
+        categorized[beat] = unique[:CONFIG["news_per_beat"]]
+        log.info(f"📰 {beat:15s} → Final: {len(categorized[beat])} news")
 
     return categorized
 
@@ -364,7 +343,7 @@ def build_html(news_by_beat: dict) -> str:
     <p style="margin:0 0 16px;font-size:12px;color:#64748b;">{today_en}</p>
     <span style="background:rgba(148,163,184,0.12);color:#94a3b8;
                  font-size:12px;padding:5px 16px;border-radius:20px;">
-      {total} khabrein &nbsp;·&nbsp; 7 categories &nbsp;·&nbsp; 8 sources
+      {total} khabrein &nbsp;·&nbsp; 7 categories
     </span>
   </td></tr>
 
@@ -372,7 +351,7 @@ def build_html(news_by_beat: dict) -> str:
     <p style="margin:0;font-size:12px;color:#93c5fd;line-height:1.6;">
       🔔 <b style="color:#bfdbfe;">Aapki personalized morning briefing</b>
       &nbsp;|&nbsp; Har beat mein 10 guaranteed khabrein
-      &nbsp;|&nbsp; Duplicates removed
+      &nbsp;|&nbsp; Powered by NewsAPI
     </p>
   </td></tr>
 
@@ -381,8 +360,8 @@ def build_html(news_by_beat: dict) -> str:
   <tr><td style="background:#0f172a;border-radius:0 0 14px 14px;
                  padding:20px 36px;text-align:center;">
     <p style="margin:0 0 6px;font-size:11px;color:#334155;line-height:1.8;">
-      📰 HT · Indian Express · News18 · Firstpost · ABP Live
-      · Live Hindustan · Dainik Bhaskar · Google News
+      📰 Sources: BBC · Reuters · NDTV · Times of India · The Hindu
+      · ESPN · TechCrunch · Al Jazeera & more
     </p>
     <p style="margin:0;font-size:11px;color:#1e293b;">
       Auto-generated · रोज 9:00 AM IST · {datetime.now().strftime("%I:%M %p")} IST
@@ -405,22 +384,22 @@ def send_email(html: str) -> bool:
             s.login(CONFIG["sender_email"], CONFIG["sender_password"])
             s.sendmail(CONFIG["sender_email"],
                        CONFIG["receiver_email"], msg.as_string())
-        log.info(f"✅  Email sent → {CONFIG['receiver_email']}")
+        log.info(f"✅ Email sent → {CONFIG['receiver_email']}")
         return True
     except smtplib.SMTPAuthenticationError:
-        log.error("❌  Gmail auth failed — check SENDER_PASSWORD secret")
+        log.error("❌ Gmail auth failed")
     except Exception as e:
-        log.error(f"❌  Email failed: {e}")
+        log.error(f"❌ Email failed: {e}")
     return False
 
 
 def main():
     log.info("=" * 60)
-    log.info("🚀  Daily News Emailer — RSS Dedicated Feeds")
+    log.info("🚀  Daily News Emailer — NewsAPI Edition")
     log.info("=" * 60)
     news = collect_news()
     send_email(build_html(news))
-    log.info("All done ✓")
+    log.info("Done ✓")
 
 
 if __name__ == "__main__":
