@@ -375,7 +375,7 @@ def build_html(news_by_beat: dict) -> str:
 def send_email(html: str) -> bool:
     today_en = datetime.now().strftime("%d %b %Y")
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"☀️ आज की खबरें — {today_en} | Morning News Digest"
+    msg["Subject"] = f"☀️ आज की खबर — {today_en} | Morning News Digest"
     msg["From"]    = CONFIG["sender_email"]
     msg["To"]      = CONFIG["receiver_email"]
     msg.attach(MIMEText(html, "html", "utf-8"))
