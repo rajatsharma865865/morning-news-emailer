@@ -1,7 +1,7 @@
 """
-Daily Morning News Emailer — NewsAPI Top Headlines
+Daily Morning News Emailer — GNews API
 Guaranteed 10 news per beat | GitHub Actions | 9 AM IST
-Bilingual Hindi + English
+Bilingual Hindi + English | gnews.io free plan
 """
 
 import os, smtplib, hashlib, logging
@@ -16,7 +16,7 @@ CONFIG = {
     "sender_email":    os.environ["SENDER_EMAIL"],
     "sender_password": os.environ["SENDER_PASSWORD"],
     "receiver_email":  os.environ["RECEIVER_EMAIL"],
-    "newsapi_key":     os.environ["NEWSAPI_KEY"],
+    "gnews_key":       os.environ["GNEWS_KEY"],
     "news_per_beat":   10,
 }
 
@@ -33,41 +33,52 @@ BEAT_BILINGUAL = {
     "City News":      {"hi": "शहर",             "en": "City News"},
 }
 
-# NewsAPI /top-headlines params per beat
-# Free plan supports: country, category, q, sources
-BEAT_PARAMS = {
+# GNews API — /v4/top-headlines supports topic + country
+# /v4/search supports keyword queries
+BEAT_REQUESTS = {
     "National": [
-        {"country": "in", "pageSize": 30},
-        {"country": "in", "q": "india", "pageSize": 30},
+        {"url": "https://gnews.io/api/v4/top-headlines",
+         "params": {"country": "in", "lang": "en", "max": 10}},
+        {"url": "https://gnews.io/api/v4/search",
+         "params": {"q": "India national news", "country": "in", "lang": "en", "max": 10}},
     ],
     "International": [
-        {"country": "us", "pageSize": 20},
-        {"country": "gb", "pageSize": 20},
-        {"q": "world international", "language": "en", "pageSize": 20},
+        {"url": "https://gnews.io/api/v4/top-headlines",
+         "params": {"topic": "world", "lang": "en", "max": 10}},
+        {"url": "https://gnews.io/api/v4/search",
+         "params": {"q": "world international news", "lang": "en", "max": 10}},
     ],
     "Politics": [
-        {"country": "in", "q": "BJP Congress election Modi politics", "pageSize": 30},
-        {"country": "in", "q": "parliament minister CM government", "pageSize": 30},
+        {"url": "https://gnews.io/api/v4/search",
+         "params": {"q": "India politics BJP Congress election", "country": "in", "lang": "en", "max": 10}},
+        {"url": "https://gnews.io/api/v4/search",
+         "params": {"q": "Modi Rahul Gandhi parliament minister India", "lang": "en", "max": 10}},
     ],
     "Sports": [
-        {"country": "in", "category": "sports", "pageSize": 30},
-        {"q": "cricket IPL India sports", "language": "en", "pageSize": 30},
+        {"url": "https://gnews.io/api/v4/top-headlines",
+         "params": {"topic": "sports", "country": "in", "lang": "en", "max": 10}},
+        {"url": "https://gnews.io/api/v4/search",
+         "params": {"q": "cricket IPL India match sports", "lang": "en", "max": 10}},
     ],
     "Entertainment": [
-        {"country": "in", "category": "entertainment", "pageSize": 30},
-        {"q": "bollywood movie film OTT", "language": "en", "pageSize": 30},
+        {"url": "https://gnews.io/api/v4/top-headlines",
+         "params": {"topic": "entertainment", "country": "in", "lang": "en", "max": 10}},
+        {"url": "https://gnews.io/api/v4/search",
+         "params": {"q": "Bollywood movie film OTT Netflix India", "lang": "en", "max": 10}},
     ],
     "Science & Tech": [
-        {"country": "in", "category": "technology", "pageSize": 30},
-        {"q": "ISRO technology AI startup India", "language": "en", "pageSize": 30},
+        {"url": "https://gnews.io/api/v4/top-headlines",
+         "params": {"topic": "technology", "country": "in", "lang": "en", "max": 10}},
+        {"url": "https://gnews.io/api/v4/search",
+         "params": {"q": "ISRO technology AI startup India science", "lang": "en", "max": 10}},
     ],
     "City News": [
-        {"country": "in", "q": "Delhi Mumbai Bangalore Chennai city", "pageSize": 30},
-        {"country": "in", "q": "Noida Gurgaon Lucknow Pune Hyderabad", "pageSize": 30},
+        {"url": "https://gnews.io/api/v4/search",
+         "params": {"q": "Delhi Mumbai Bangalore city news India", "country": "in", "lang": "en", "max": 10}},
+        {"url": "https://gnews.io/api/v4/search",
+         "params": {"q": "Noida Gurgaon Lucknow Chennai Hyderabad Pune city", "lang": "en", "max": 10}},
     ],
 }
-
-NEWSAPI_URL = "https://newsapi.org/v2/top-headlines"
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s | %(levelname)s | %(message)s",
@@ -89,27 +100,29 @@ class NewsItem:
         ).hexdigest()
 
 
-def fetch_headlines(params: dict, beat: str) -> list:
+def fetch_gnews(req: dict, beat: str) -> list:
     items = []
     try:
-        params["apiKey"] = CONFIG["newsapi_key"]
-        r = requests.get(NEWSAPI_URL, params=params, timeout=15)
+        params = dict(req["params"])
+        params["apikey"] = CONFIG["gnews_key"]
+        r = requests.get(req["url"], params=params, timeout=15)
         data = r.json()
-        if data.get("status") != "ok":
-            log.warning(f"{beat}: API error — {data.get('message','')}")
+        articles = data.get("articles", [])
+        if not articles and "errors" in data:
+            log.warning(f"{beat}: GNews error — {data.get('errors')}")
             return items
-        for art in data.get("articles", []):
+        for art in articles:
             title = (art.get("title") or "").strip()
             url   = (art.get("url") or "").strip()
-            src   = (art.get("source", {}).get("name") or "NewsAPI").strip()
-            if not title or title == "[Removed]" or not url:
+            src   = (art.get("source", {}).get("name") or "GNews").strip()
+            if not title or not url:
                 continue
             # Clean title suffix
             for sep in [" - ", " | "]:
                 if sep in title:
                     title = title.rsplit(sep, 1)[0].strip()
             items.append(NewsItem(title=title, url=url, source=src, beat=beat))
-        log.info(f"✅ {beat:15s} | params={list(params.keys())} → {len(items)} articles")
+        log.info(f"✅ {beat:15s} | {req['url'].split('/')[-1]:15s} → {len(items)} articles")
     except Exception as e:
         log.error(f"❌ {beat}: {e}")
     return items
@@ -123,8 +136,8 @@ def collect_news() -> dict:
         beat_seen = set()
         beat_items = []
 
-        for params in BEAT_PARAMS[beat]:
-            fetched = fetch_headlines(dict(params), beat)
+        for req in BEAT_REQUESTS[beat]:
+            fetched = fetch_gnews(req, beat)
             for item in fetched:
                 if item.fingerprint not in beat_seen and item.fingerprint not in global_seen:
                     beat_seen.add(item.fingerprint)
@@ -250,21 +263,21 @@ def build_html(news_by_beat: dict) -> str:
     <p style="margin:0 0 2px;font-size:13px;color:#e2e8f0;font-weight:500;">{today_hi}</p>
     <p style="margin:0 0 16px;font-size:12px;color:#64748b;">{today_en}</p>
     <span style="background:rgba(148,163,184,0.12);color:#94a3b8;font-size:12px;padding:5px 16px;border-radius:20px;">
-      {total} khabrein &nbsp;.&nbsp; 7 categories
+      {total} khabrein &nbsp;|&nbsp; 7 categories
     </span>
   </td></tr>
   <tr><td style="background:#1e3a5f;padding:10px 36px;text-align:center;">
     <p style="margin:0;font-size:12px;color:#93c5fd;line-height:1.6;">
-      Aapki personalized morning briefing &nbsp;|&nbsp; Har beat mein 10 khabrein &nbsp;|&nbsp; Powered by NewsAPI
+      Aapki personalized morning briefing &nbsp;|&nbsp; Har beat mein 10 khabrein &nbsp;|&nbsp; Powered by GNews
     </p>
   </td></tr>
   <tr><td style="background:#eef2f7;padding:20px 6px;">{beats_html}</td></tr>
   <tr><td style="background:#0f172a;border-radius:0 0 14px 14px;padding:20px 36px;text-align:center;">
     <p style="margin:0 0 6px;font-size:11px;color:#334155;line-height:1.8;">
-      Sources: BBC, Reuters, NDTV, Times of India, ESPN, TechCrunch & more
+      Sources: Hindustan Times, Indian Express, NDTV, BBC, Reuters & more
     </p>
     <p style="margin:0;font-size:11px;color:#1e293b;">
-      Auto-generated &nbsp;.&nbsp; Roz 9:00 AM IST &nbsp;.&nbsp; {datetime.now().strftime("%I:%M %p")} IST
+      Auto-generated &nbsp;|&nbsp; Roz 9:00 AM IST &nbsp;|&nbsp; {datetime.now().strftime("%I:%M %p")} IST
     </p>
   </td></tr>
 </table></td></tr></table>
@@ -293,7 +306,7 @@ def send_email(html: str) -> bool:
 
 def main():
     log.info("=" * 60)
-    log.info("Daily News Emailer - NewsAPI Top Headlines")
+    log.info("Daily News Emailer - GNews API Edition")
     log.info("=" * 60)
     news = collect_news()
     send_email(build_html(news))
