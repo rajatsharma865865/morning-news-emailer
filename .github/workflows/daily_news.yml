@@ -25,5 +25,5 @@ jobs:
           SENDER_EMAIL:    ${{ secrets.SENDER_EMAIL }}
           SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
           RECEIVER_EMAIL:  ${{ secrets.RECEIVER_EMAIL }}
-          NEWSAPI_KEY:     ${{ secrets.NEWSAPI_KEY }}
+          GNEWS_KEY:       ${{ secrets.GNEWS_KEY }}
         run: python news_emailer.py
