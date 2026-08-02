@@ -1,10 +1,10 @@
 """
-Daily Morning News Emailer — GNews API
-Guaranteed 10 news per beat | GitHub Actions | 9 AM IST
-Bilingual Hindi + English | gnews.io free plan
+Daily Morning News Emailer — GNews API (Rate Limit Safe)
+1 request per beat + delay | GitHub Actions | 9 AM IST
+Bilingual Hindi + English
 """
 
-import os, smtplib, hashlib, logging
+import os, smtplib, hashlib, logging, time
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -33,51 +33,36 @@ BEAT_BILINGUAL = {
     "City News":      {"hi": "शहर",             "en": "City News"},
 }
 
-# GNews API — /v4/top-headlines supports topic + country
-# /v4/search supports keyword queries
-BEAT_REQUESTS = {
-    "National": [
-        {"url": "https://gnews.io/api/v4/top-headlines",
-         "params": {"country": "in", "lang": "en", "max": 10}},
-        {"url": "https://gnews.io/api/v4/search",
-         "params": {"q": "India national news", "country": "in", "lang": "en", "max": 10}},
-    ],
-    "International": [
-        {"url": "https://gnews.io/api/v4/top-headlines",
-         "params": {"topic": "world", "lang": "en", "max": 10}},
-        {"url": "https://gnews.io/api/v4/search",
-         "params": {"q": "world international news", "lang": "en", "max": 10}},
-    ],
-    "Politics": [
-        {"url": "https://gnews.io/api/v4/search",
-         "params": {"q": "India politics BJP Congress election", "country": "in", "lang": "en", "max": 10}},
-        {"url": "https://gnews.io/api/v4/search",
-         "params": {"q": "Modi Rahul Gandhi parliament minister India", "lang": "en", "max": 10}},
-    ],
-    "Sports": [
-        {"url": "https://gnews.io/api/v4/top-headlines",
-         "params": {"topic": "sports", "country": "in", "lang": "en", "max": 10}},
-        {"url": "https://gnews.io/api/v4/search",
-         "params": {"q": "cricket IPL India match sports", "lang": "en", "max": 10}},
-    ],
-    "Entertainment": [
-        {"url": "https://gnews.io/api/v4/top-headlines",
-         "params": {"topic": "entertainment", "country": "in", "lang": "en", "max": 10}},
-        {"url": "https://gnews.io/api/v4/search",
-         "params": {"q": "Bollywood movie film OTT Netflix India", "lang": "en", "max": 10}},
-    ],
-    "Science & Tech": [
-        {"url": "https://gnews.io/api/v4/top-headlines",
-         "params": {"topic": "technology", "country": "in", "lang": "en", "max": 10}},
-        {"url": "https://gnews.io/api/v4/search",
-         "params": {"q": "ISRO technology AI startup India science", "lang": "en", "max": 10}},
-    ],
-    "City News": [
-        {"url": "https://gnews.io/api/v4/search",
-         "params": {"q": "Delhi Mumbai Bangalore city news India", "country": "in", "lang": "en", "max": 10}},
-        {"url": "https://gnews.io/api/v4/search",
-         "params": {"q": "Noida Gurgaon Lucknow Chennai Hyderabad Pune city", "lang": "en", "max": 10}},
-    ],
+# Sirf 1 request per beat — total 7 requests/day (well within 10/day limit)
+BEAT_REQUEST = {
+    "National": {
+        "url": "https://gnews.io/api/v4/top-headlines",
+        "params": {"country": "in", "lang": "en", "max": 10},
+    },
+    "International": {
+        "url": "https://gnews.io/api/v4/top-headlines",
+        "params": {"topic": "world", "lang": "en", "max": 10},
+    },
+    "Politics": {
+        "url": "https://gnews.io/api/v4/search",
+        "params": {"q": "India politics election BJP Congress Modi", "lang": "en", "max": 10},
+    },
+    "Sports": {
+        "url": "https://gnews.io/api/v4/top-headlines",
+        "params": {"topic": "sports", "lang": "en", "max": 10},
+    },
+    "Entertainment": {
+        "url": "https://gnews.io/api/v4/top-headlines",
+        "params": {"topic": "entertainment", "lang": "en", "max": 10},
+    },
+    "Science & Tech": {
+        "url": "https://gnews.io/api/v4/top-headlines",
+        "params": {"topic": "technology", "lang": "en", "max": 10},
+    },
+    "City News": {
+        "url": "https://gnews.io/api/v4/search",
+        "params": {"q": "Delhi Mumbai Bangalore Chennai Hyderabad city news", "lang": "en", "max": 10},
+    },
 }
 
 logging.basicConfig(level=logging.INFO,
@@ -100,29 +85,28 @@ class NewsItem:
         ).hexdigest()
 
 
-def fetch_gnews(req: dict, beat: str) -> list:
+def fetch_gnews(beat: str) -> list:
     items = []
+    req = BEAT_REQUEST[beat]
     try:
         params = dict(req["params"])
         params["apikey"] = CONFIG["gnews_key"]
         r = requests.get(req["url"], params=params, timeout=15)
         data = r.json()
-        articles = data.get("articles", [])
-        if not articles and "errors" in data:
-            log.warning(f"{beat}: GNews error — {data.get('errors')}")
+        if "errors" in data:
+            log.warning(f"{beat}: GNews error — {data['errors']}")
             return items
-        for art in articles:
+        for art in data.get("articles", []):
             title = (art.get("title") or "").strip()
             url   = (art.get("url") or "").strip()
             src   = (art.get("source", {}).get("name") or "GNews").strip()
             if not title or not url:
                 continue
-            # Clean title suffix
             for sep in [" - ", " | "]:
                 if sep in title:
                     title = title.rsplit(sep, 1)[0].strip()
             items.append(NewsItem(title=title, url=url, source=src, beat=beat))
-        log.info(f"✅ {beat:15s} | {req['url'].split('/')[-1]:15s} → {len(items)} articles")
+        log.info(f"✅ {beat:15s} → {len(items)} articles")
     except Exception as e:
         log.error(f"❌ {beat}: {e}")
     return items
@@ -132,29 +116,25 @@ def collect_news() -> dict:
     categorized = {}
     global_seen = set()
 
-    for beat in BEATS:
-        beat_seen = set()
-        beat_items = []
+    for i, beat in enumerate(BEATS):
+        # 5 second delay between requests to avoid rate limiting
+        if i > 0:
+            log.info(f"⏳ Waiting 5s before next request...")
+            time.sleep(5)
 
-        for req in BEAT_REQUESTS[beat]:
-            fetched = fetch_gnews(req, beat)
-            for item in fetched:
-                if item.fingerprint not in beat_seen and item.fingerprint not in global_seen:
-                    beat_seen.add(item.fingerprint)
-                    beat_items.append(item)
-            if len(beat_items) >= CONFIG["news_per_beat"]:
-                break
+        items = fetch_gnews(beat)
+        unique = []
+        for item in items:
+            if item.fingerprint not in global_seen:
+                global_seen.add(item.fingerprint)
+                unique.append(item)
 
-        for item in beat_items[:CONFIG["news_per_beat"]]:
-            global_seen.add(item.fingerprint)
-
-        categorized[beat] = beat_items[:CONFIG["news_per_beat"]]
+        categorized[beat] = unique[:CONFIG["news_per_beat"]]
         log.info(f"📰 {beat:15s} → Final: {len(categorized[beat])} news")
 
     return categorized
 
 
-# Email Template
 BEAT_META = {
     "National":       {"color": "#1a56db", "icon": "🇮🇳"},
     "International":  {"color": "#0e9f6e", "icon": "🌍"},
@@ -268,7 +248,7 @@ def build_html(news_by_beat: dict) -> str:
   </td></tr>
   <tr><td style="background:#1e3a5f;padding:10px 36px;text-align:center;">
     <p style="margin:0;font-size:12px;color:#93c5fd;line-height:1.6;">
-      Aapki personalized morning briefing &nbsp;|&nbsp; Har beat mein 10 khabrein &nbsp;|&nbsp; Powered by GNews
+      Aapki personalized morning briefing &nbsp;|&nbsp; Har beat mein khabrein &nbsp;|&nbsp; Powered by GNews
     </p>
   </td></tr>
   <tr><td style="background:#eef2f7;padding:20px 6px;">{beats_html}</td></tr>
@@ -306,7 +286,7 @@ def send_email(html: str) -> bool:
 
 def main():
     log.info("=" * 60)
-    log.info("Daily News Emailer - GNews API Edition")
+    log.info("Daily News Emailer - GNews API (Rate Limit Safe)")
     log.info("=" * 60)
     news = collect_news()
     send_email(build_html(news))
