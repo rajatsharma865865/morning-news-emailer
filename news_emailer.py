@@ -1,7 +1,7 @@
 """
-Daily Morning News Emailer — GNews API (Rate Limit Safe)
-1 request per beat + delay | GitHub Actions | 9 AM IST
-Bilingual Hindi + English
+Daily Morning News Emailer — GNews API with Source Filter
+Sources: HT, IE, News18, Moneycontrol, Firstpost, ABP Live, Live Hindustan, Bhaskar
+GitHub Actions | 9 AM IST | Bilingual Hindi + English
 """
 
 import os, smtplib, hashlib, logging, time
@@ -33,36 +33,84 @@ BEAT_BILINGUAL = {
     "City News":      {"hi": "शहर",             "en": "City News"},
 }
 
-# Sirf 1 request per beat — total 7 requests/day (well within 10/day limit)
-BEAT_REQUEST = {
-    "National": {
-        "url": "https://gnews.io/api/v4/top-headlines",
-        "params": {"country": "in", "lang": "en", "max": 10},
-    },
-    "International": {
-        "url": "https://gnews.io/api/v4/top-headlines",
-        "params": {"topic": "world", "lang": "en", "max": 10},
-    },
-    "Politics": {
-        "url": "https://gnews.io/api/v4/search",
-        "params": {"q": "India politics election BJP Congress Modi", "lang": "en", "max": 10},
-    },
-    "Sports": {
-        "url": "https://gnews.io/api/v4/top-headlines",
-        "params": {"topic": "sports", "lang": "en", "max": 10},
-    },
-    "Entertainment": {
-        "url": "https://gnews.io/api/v4/top-headlines",
-        "params": {"topic": "entertainment", "lang": "en", "max": 10},
-    },
-    "Science & Tech": {
-        "url": "https://gnews.io/api/v4/top-headlines",
-        "params": {"topic": "technology", "lang": "en", "max": 10},
-    },
-    "City News": {
-        "url": "https://gnews.io/api/v4/search",
-        "params": {"q": "Delhi Mumbai Bangalore Chennai Hyderabad city news", "lang": "en", "max": 10},
-    },
+# Allowed sources — only news from these domains will be kept
+ALLOWED_DOMAINS = [
+    "hindustantimes.com",
+    "indianexpress.com",
+    "news18.com",
+    "moneycontrol.com",
+    "firstpost.com",
+    "abplive.com",
+    "livehindustan.com",
+    "bhaskar.com",
+]
+
+# Beat-wise keywords for post-filtering
+BEAT_KEYWORDS = {
+    "National": [
+        "india", "national", "delhi", "government", "modi", "parliament",
+        "supreme court", "high court", "cbi", "ed ", "railway", "flood",
+        "earthquake", "accident", "niti aayog", "budget", "rbi", "rupee",
+        "petrol", "aadhaar", "bharat", "union", "central",
+    ],
+    "International": [
+        "world", "global", "international", "usa", "america", "china",
+        "russia", "pakistan", "israel", "europe", "united nations", "nato",
+        "foreign", "biden", "trump", "war", "ukraine", "iran", "saudi",
+        "afghanistan", "taiwan", "japan", "australia", "uk ", "britain",
+        "france", "germany", "g20", "imf", "opec", "diplomacy",
+    ],
+    "Politics": [
+        "bjp", "congress", "aam aadmi", "aap ", "samajwadi", "bsp ",
+        "trinamool", "shiv sena", "election", "poll", "vote", "ballot",
+        "chief minister", "cm ", "governor", "mla ", "mp ", "minister",
+        "yogi", "rahul gandhi", "amit shah", "kejriwal", "mamata",
+        "nitish", "opposition", "ruling party", "coalition", "rally",
+        "manifesto", "political", "party", "cabinet",
+    ],
+    "Sports": [
+        "cricket", "ipl", "test match", "odi", "t20", "football", "fifa",
+        "hockey", "badminton", "tennis", "grand slam", "olympic",
+        "commonwealth", "asian games", "bcci", "virat", "rohit sharma",
+        "dhoni", "bumrah", "neeraj chopra", "sindhu", "saina",
+        "match", "tournament", "trophy", "league", "medal", "score",
+        "wicket", "century", "goal", "player", "team india",
+    ],
+    "Entertainment": [
+        "bollywood", "film", "movie", "actor", "actress", "director",
+        "cinema", "music", "celebrity", "award", "ott", "netflix",
+        "hotstar", "amazon prime", "web series", "singer", "concert",
+        "deepika", "ranveer", "alia", "ranbir", "salman", "shahrukh",
+        "akshay", "katrina", "hrithik", "arijit", "neha kakkar",
+        "bigg boss", "indian idol", "reality show", "trailer", "release",
+        "box office", "filmfare",
+    ],
+    "Science & Tech": [
+        "technology", "tech", "artificial intelligence", "ai ", "chatgpt",
+        "isro", "space", "satellite", "rocket", "nasa", "chandrayaan",
+        "gaganyaan", "startup", "funding", "unicorn", "app", "software",
+        "iphone", "android", "samsung", "google", "microsoft", "meta ",
+        "electric vehicle", "ev ", "5g", "cyber", "hack", "robot",
+        "quantum", "science", "research", "innovation",
+    ],
+    "City News": [
+        "mumbai", "delhi", "bangalore", "bengaluru", "hyderabad",
+        "chennai", "kolkata", "pune", "ahmedabad", "noida", "gurgaon",
+        "lucknow", "jaipur", "patna", "bhopal", "surat", "indore",
+        "metro", "traffic", "municipal", "ward", "mayor", "smart city",
+        "local", "colony", "housing", "civic",
+    ],
+}
+
+# GNews search query per beat
+BEAT_QUERY = {
+    "National":       "India national news",
+    "International":  "world international news",
+    "Politics":       "India politics election BJP Congress",
+    "Sports":         "India cricket sports IPL",
+    "Entertainment":  "Bollywood entertainment movies OTT",
+    "Science & Tech": "India technology ISRO AI startup",
+    "City News":      "Delhi Mumbai Bangalore city news India",
 }
 
 logging.basicConfig(level=logging.INFO,
@@ -85,30 +133,65 @@ class NewsItem:
         ).hexdigest()
 
 
-def fetch_gnews(beat: str) -> list:
+def is_allowed_source(url: str) -> bool:
+    """Check if article URL is from one of our allowed sources."""
+    return any(domain in url for domain in ALLOWED_DOMAINS)
+
+
+def matches_beat(title: str, beat: str) -> bool:
+    """Check if title matches beat keywords."""
+    title_lower = title.lower()
+    return any(kw in title_lower for kw in BEAT_KEYWORDS[beat])
+
+
+def fetch_beat(beat: str) -> list:
     items = []
-    req = BEAT_REQUEST[beat]
     try:
-        params = dict(req["params"])
-        params["apikey"] = CONFIG["gnews_key"]
-        r = requests.get(req["url"], params=params, timeout=15)
+        params = {
+            "apikey":   CONFIG["gnews_key"],
+            "q":        BEAT_QUERY[beat],
+            "lang":     "en",
+            "country":  "in",
+            "max":      10,
+            "sortby":   "publishedAt",
+        }
+        r = requests.get(
+            "https://gnews.io/api/v4/search",
+            params=params,
+            timeout=15,
+        )
         data = r.json()
+
         if "errors" in data:
             log.warning(f"{beat}: GNews error — {data['errors']}")
             return items
+
         for art in data.get("articles", []):
-            title = (art.get("title") or "").strip()
-            url   = (art.get("url") or "").strip()
-            src   = (art.get("source", {}).get("name") or "GNews").strip()
+            title  = (art.get("title") or "").strip()
+            url    = (art.get("url") or "").strip()
+            src    = (art.get("source", {}).get("name") or "").strip()
+            src_url = (art.get("source", {}).get("url") or url).strip()
+
             if not title or not url:
                 continue
+
+            # Clean title suffix
             for sep in [" - ", " | "]:
                 if sep in title:
                     title = title.rsplit(sep, 1)[0].strip()
+
+            # Only keep articles from allowed sources
+            if not is_allowed_source(url) and not is_allowed_source(src_url):
+                log.info(f"  Skipped (not in allowed sources): {src}")
+                continue
+
             items.append(NewsItem(title=title, url=url, source=src, beat=beat))
-        log.info(f"✅ {beat:15s} → {len(items)} articles")
+
+        log.info(f"✅ {beat:15s} → {len(items)} articles from allowed sources")
+
     except Exception as e:
         log.error(f"❌ {beat}: {e}")
+
     return items
 
 
@@ -117,12 +200,13 @@ def collect_news() -> dict:
     global_seen = set()
 
     for i, beat in enumerate(BEATS):
-        # 5 second delay between requests to avoid rate limiting
         if i > 0:
-            log.info(f"⏳ Waiting 5s before next request...")
-            time.sleep(5)
+            log.info(f"⏳ Waiting 6s...")
+            time.sleep(6)
 
-        items = fetch_gnews(beat)
+        items = fetch_beat(beat)
+
+        # Deduplicate
         unique = []
         for item in items:
             if item.fingerprint not in global_seen:
@@ -176,6 +260,7 @@ def build_html(news_by_beat: dict) -> str:
         items = news_by_beat.get(beat, [])
         meta, bi = BEAT_META[beat], BEAT_BILINGUAL[beat]
         rows = ""
+
         if not items:
             rows = """<tr><td style="padding:16px 18px;color:#94a3b8;font-size:13px;">
                         Aaj is category mein news nahi mili.
@@ -210,7 +295,7 @@ def build_html(news_by_beat: dict) -> str:
             <table width="100%" cellpadding="0" cellspacing="0"><tr>
               <td>
                 <span style="font-size:20px;vertical-align:middle;">{meta['icon']}</span>
-                <span style="color:#fff;font-size:15px;font-weight:700;
+                <span style="color:#fff;font-size:15s;font-weight:700;
                              margin-left:8px;vertical-align:middle;">{bi['hi']}</span>
                 <span style="color:rgba(255,255,255,0.6);font-size:12px;
                              margin-left:6px;vertical-align:middle;">/ {bi['en']}</span>
@@ -248,16 +333,16 @@ def build_html(news_by_beat: dict) -> str:
   </td></tr>
   <tr><td style="background:#1e3a5f;padding:10px 36px;text-align:center;">
     <p style="margin:0;font-size:12px;color:#93c5fd;line-height:1.6;">
-      Aapki personalized morning briefing &nbsp;|&nbsp; Har beat mein khabrein &nbsp;|&nbsp; Powered by GNews
+      Sources: HT · Indian Express · News18 · Moneycontrol · Firstpost · ABP Live · Live Hindustan · Bhaskar
     </p>
   </td></tr>
   <tr><td style="background:#eef2f7;padding:20px 6px;">{beats_html}</td></tr>
   <tr><td style="background:#0f172a;border-radius:0 0 14px 14px;padding:20px 36px;text-align:center;">
     <p style="margin:0 0 6px;font-size:11px;color:#334155;line-height:1.8;">
-      Sources: Hindustan Times, Indian Express, NDTV, BBC, Reuters & more
+      Hindustan Times · Indian Express · News18 · Moneycontrol · Firstpost · ABP Live · Live Hindustan · Dainik Bhaskar
     </p>
     <p style="margin:0;font-size:11px;color:#1e293b;">
-      Auto-generated &nbsp;|&nbsp; Roz 9:00 AM IST &nbsp;|&nbsp; {datetime.now().strftime("%I:%M %p")} IST
+      Auto-generated · Roz 9:00 AM IST · {datetime.now().strftime("%I:%M %p")} IST
     </p>
   </td></tr>
 </table></td></tr></table>
@@ -286,7 +371,7 @@ def send_email(html: str) -> bool:
 
 def main():
     log.info("=" * 60)
-    log.info("Daily News Emailer - GNews API (Rate Limit Safe)")
+    log.info("Daily News Emailer - GNews + Source Filter")
     log.info("=" * 60)
     news = collect_news()
     send_email(build_html(news))
