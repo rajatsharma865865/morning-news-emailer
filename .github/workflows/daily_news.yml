@@ -2,7 +2,14 @@ name: Daily Morning News Email
 
 on:
   schedule:
-    - cron: '0 2 * * *'   # 2:00 AM UTC = 7:30 AM IST (GitHub delay ~1-1.5hr = 9 AM IST)
+    - cron: '0 0 * * *'   # 12:00 AM UTC = 5:30 AM IST
+    - cron: '30 0 * * *'  # 12:30 AM UTC = 6:00 AM IST  
+    - cron: '0 1 * * *'   # 1:00 AM UTC = 6:30 AM IST
+    - cron: '30 1 * * *'  # 1:30 AM UTC = 7:00 AM IST
+    - cron: '0 2 * * *'   # 2:00 AM UTC = 7:30 AM IST
+    - cron: '30 2 * * *'  # 2:30 AM UTC = 8:00 AM IST
+    - cron: '0 3 * * *'   # 3:00 AM UTC = 8:30 AM IST
+    - cron: '30 3 * * *'  # 3:30 AM UTC = 9:00 AM IST
   workflow_dispatch:
 
 jobs:
@@ -20,10 +27,19 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run news emailer
+      - name: Check IST time and run only between 9-10 AM IST
         env:
           SENDER_EMAIL:    ${{ secrets.SENDER_EMAIL }}
           SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
           RECEIVER_EMAIL:  ${{ secrets.RECEIVER_EMAIL }}
           GNEWS_KEY:       ${{ secrets.GNEWS_KEY }}
-        run: python news_emailer.py
+        run: |
+          IST_HOUR=$(TZ='Asia/Kolkata' date +%H)
+          IST_MIN=$(TZ='Asia/Kolkata' date +%M)
+          echo "Current IST time: ${IST_HOUR}:${IST_MIN}"
+          if [ "$IST_HOUR" -eq 9 ]; then
+            echo "9 AM IST — Running news emailer!"
+            python news_emailer.py
+          else
+            echo "Not 9 AM IST yet (${IST_HOUR}:${IST_MIN}). Skipping."
+          fi
